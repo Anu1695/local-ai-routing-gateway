@@ -1,0 +1,71 @@
+import json
+import numpy as np
+import requests
+
+OLLAMA_URL = "http://localhost:11434"
+EMBED_MODEL = "nomic-embed-text"
+LLM_MODEL = "llama3"
+
+# Setup your primary target enterprise routing queues
+ROUTES = {
+    "Cloud infrastructure, servers, and DevOps": "cloud-ops-team",
+    "Billing, invoices, payments, and refunds": "finance-support",
+    "Access management, passwords, and security IAM": "secops-tier1"
+}
+
+def get_local_embedding(text):
+    try:
+        response = requests.post(
+            f"{OLLAMA_URL}/api/embeddings",
+            json={"model": EMBED_MODEL, "prompt": text}
+        )
+        return np.array(response.json()["embedding"])
+    except Exception as e:
+        print(f"Embedding error: {e}")
+        return np.zeros(768)
+
+def cosine_similarity(v1, v2):
+    mag1, mag2 = np.linalg.norm(v1), np.linalg.norm(v2)
+    return float(np.dot(v1, v2) / (mag1 * mag2)) if mag1 and mag2 else 0.0
+
+print("Initializing Local Semantic Router... Precomputing route vectors.")
+ROUTE_EMBEDDINGS = {route: get_local_embedding(route) for route in ROUTES.keys()}
+
+def route_ticket(ticket_text, threshold=0.55):
+    print(f"\n[Processing Ticket]: {ticket_text}")
+    ticket_vector = get_local_embedding(ticket_text)
+    best_route, highest_score = None, -1.0
+
+    for route, route_vector in ROUTE_EMBEDDINGS.items():
+        score = cosine_similarity(ticket_vector, route_vector)
+        if score > highest_score:
+            highest_score, best_route = score, route
+
+    # Tier 1 Math Execution
+    if highest_score >= threshold:
+        print(f"-> Tier 1 Match Success! Category: '{best_route}'")
+        return {"assigned_queue": ROUTES[best_route], "method": "Tier1_Vector_Similarity", "confidence": round(highest_score, 4)}
+
+    # Tier 2 Fallback to Llama3
+    print(f"-> Similarity score ({highest_score:.4f}) below threshold. Escalating to Tier 2 LLM...")
+    system_prompt = (
+        "You are an enterprise ticket routing AI. Analyze the ticket and return a JSON object with keys: "
+        "'assigned_queue' (must be one of: 'cloud-ops-team', 'finance-support', 'secops-tier1', 'manual-triage-queue'), "
+        "'urgency' ('P1', 'P2', 'P3'), and 'reasoning'."
+    )
+    try:
+        response = requests.post(
+            f"{OLLAMA_URL}/api/generate",
+            json={"model": LLM_MODEL, "prompt": f"{system_prompt}\n\nTicket: {ticket_text}\n\nReturn strict raw JSON:", "stream": False, "format": "json"}
+        )
+        decision = json.loads(response.json()["response"])
+        decision["method"] = "Tier2_LLM_Reasoning"
+        return decision
+    except Exception:
+        return {"assigned_queue": "manual-triage-queue", "method": "Tier2_Fallback_Error", "reasoning": "Failed parsing LLM output JSON."}
+
+if __name__ == "__main__":
+    # Test 1: Direct technical mapping (Should trigger Tier 1 Vector Similarity)
+    print(route_ticket("Our production database server cluster dropped offline completely!"))
+    # Test 2: Overlapping issues (Should trigger Tier 2 LLM Agent analysis)
+    print(route_ticket("I can't log in to change my billing password because the portal timed out."))

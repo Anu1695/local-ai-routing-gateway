@@ -2,6 +2,21 @@ import json
 import re
 import numpy as np
 import requests
+from elasticsearch import Elasticsearch
+
+# Safely initialize the client
+try:
+    # Ensure Elastic is running on port 9200
+    es = Elasticsearch("http://localhost:9200")
+    es_connected = es.ping()
+except Exception as e:
+    print(f"Elasticsearch connection failed: {e}")
+    es_connected = False
+
+def store_to_elastic(data):
+    """Stores ticket embeddings in Elasticsearch."""
+    if es_connected:
+        es.index(index="support_tickets", document=data)
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
